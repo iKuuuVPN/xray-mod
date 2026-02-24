@@ -41,6 +41,11 @@ func NewServer(ctx context.Context, config *ServerConfig) (*Server, error) {
 			return nil, errors.New("failed to add user").Base(err).AtError()
 		}
 	}
+	if config.GetUseIpsecmb() {
+		if err := validator.EnableIPSecMB(); err != nil {
+			return nil, errors.New("failed to enable ipsec-mb user matcher").Base(err).AtError()
+		}
+	}
 
 	v := core.MustFromContext(ctx)
 	s := &Server{

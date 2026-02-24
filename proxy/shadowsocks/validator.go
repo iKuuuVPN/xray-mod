@@ -20,6 +20,10 @@ type Validator struct {
 
 	behaviorSeed  uint64
 	behaviorFused bool
+
+	useIPSecMB       bool
+	aesgcmCipherType CipherType
+	aesgcmMatch      *AESGCMUserMatcher
 }
 
 var ErrNotFound = errors.New("Not Found")
@@ -32,6 +36,19 @@ func (v *Validator) Add(u *protocol.MemoryUser) error {
 	account := u.Account.(*MemoryAccount)
 	if !account.Cipher.IsAEAD() && len(v.users) > 0 {
 		return errors.New("The cipher is not support Single-port Multi-user")
+	}
+	if v.useIPSecMB {
+		if account.CipherType != v.aesgcmCipherType {
+			return errors.New("ipsec-mb user matcher requires consistent AES-GCM cipher type")
+		}
+		keyLen, err := aeadKeyLen(account.CipherType)
+		if err != nil {
+			return err
+		}
+		if len(account.Key) != int(keyLen) {
+			return errors.New("unexpected key size")
+		}
+		v.aesgcmMatch = nil
 	}
 	v.users = append(v.users, u)
 
@@ -70,6 +87,9 @@ func (v *Validator) Del(email string) error {
 	v.users[idx] = v.users[ulen-1]
 	v.users[ulen-1] = nil
 	v.users = v.users[:ulen-1]
+	if v.useIPSecMB {
+		v.aesgcmMatch = nil
+	}
 
 	return nil
 }
@@ -108,20 +128,104 @@ func (v *Validator) GetCount() int64 {
 	return int64(len(v.users))
 }
 
+func (v *Validator) EnableIPSecMB() error {
+	v.Lock()
+	defer v.Unlock()
+
+	if !ipsecmbAvailable() {
+		return errors.New("ipsec-mb is not enabled in this build")
+	}
+
+	if len(v.users) == 0 {
+		return errors.New("no users")
+	}
+
+	firstAccount := v.users[0].Account.(*MemoryAccount)
+	cipherType := firstAccount.CipherType
+	if cipherType != CipherType_AES_128_GCM && cipherType != CipherType_AES_256_GCM {
+		return errors.New("ipsec-mb user matcher requires aes-128-gcm or aes-256-gcm")
+	}
+	keyLen, err := aeadKeyLen(cipherType)
+	if err != nil {
+		return err
+	}
+
+	for _, user := range v.users {
+		account := user.Account.(*MemoryAccount)
+		if account.CipherType != cipherType {
+			return errors.New("ipsec-mb user matcher requires consistent AES-GCM cipher type")
+		}
+		if len(account.Key) != int(keyLen) {
+			return errors.New("unexpected key size")
+		}
+	}
+
+	matcher, err := NewAESGCMUserMatcher(v.users, cipherType)
+	if err != nil {
+		return err
+	}
+
+	v.useIPSecMB = true
+	v.aesgcmCipherType = cipherType
+	v.aesgcmMatch = matcher
+	return nil
+}
+
+func (v *Validator) getAESGCMMatcher() (*AESGCMUserMatcher, error) {
+	v.RLock()
+	enabled := v.useIPSecMB
+	matcher := v.aesgcmMatch
+	v.RUnlock()
+	if !enabled {
+		return nil, nil
+	}
+	if matcher != nil {
+		return matcher, nil
+	}
+
+	v.Lock()
+	defer v.Unlock()
+	if !v.useIPSecMB {
+		return nil, nil
+	}
+	if v.aesgcmMatch != nil {
+		return v.aesgcmMatch, nil
+	}
+
+	matcher, err := NewAESGCMUserMatcher(v.users, v.aesgcmCipherType)
+	if err != nil {
+		return nil, err
+	}
+	v.aesgcmMatch = matcher
+	return matcher, nil
+}
+
 // Get a Shadowsocks user.
 func (v *Validator) Get(bs []byte, command protocol.RequestCommand) (u *protocol.MemoryUser, aead cipher.AEAD, ret []byte, ivLen int32, err error) {
+	if command == protocol.RequestCommandTCP {
+		matcher, matcherErr := v.getAESGCMMatcher()
+		if matcherErr != nil {
+			return nil, nil, nil, 0, matcherErr
+		}
+		if matcher != nil {
+			u, aead, ivLen, err = matchAESGCMUserIPsecMB(matcher, bs)
+			if err != nil {
+				return nil, nil, nil, 0, err
+			}
+			return u, aead, nil, ivLen, nil
+		}
+	}
+
 	v.RLock()
 	defer v.RUnlock()
 
 	for _, user := range v.users {
 		if account := user.Account.(*MemoryAccount); account.Cipher.IsAEAD() {
-			// AEAD payload decoding requires the payload to be over 32 bytes
-			if len(bs) < 32 {
-				continue
-			}
-
 			aeadCipher := account.Cipher.(*AEADCipher)
 			ivLen = aeadCipher.IVSize()
+			if len(bs) < int(ivLen)+16 {
+				continue
+			}
 			iv := bs[:ivLen]
 			subkey := make([]byte, 32)
 			subkey = subkey[:aeadCipher.KeyBytes]
@@ -131,6 +235,9 @@ func (v *Validator) Get(bs []byte, command protocol.RequestCommand) (u *protocol
 			var matchErr error
 			switch command {
 			case protocol.RequestCommandTCP:
+				if len(bs) < int(ivLen)+18 {
+					continue
+				}
 				data := make([]byte, 4+aead.NonceSize())
 				ret, matchErr = aead.Open(data[:0], data[4:], bs[ivLen:ivLen+18], nil)
 			case protocol.RequestCommandUDP:
