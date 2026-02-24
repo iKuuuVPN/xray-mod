@@ -2,7 +2,6 @@ package shadowsocks
 
 import (
 	"encoding/binary"
-	"math/rand/v2"
 	"runtime"
 	"testing"
 
@@ -91,7 +90,7 @@ func newAESGCMMatchFixture(tb testing.TB, cipherType CipherType, users int, targ
 
 func benchmarkSSAEAD_AESGCM_UserMatch_100k_ValidatorGet(b *testing.B, cipherType CipherType) {
 	const users = 100_000
-	targetIdx := rand.New(rand.NewPCG(20260224, 1)).IntN(users)
+	targetIdx := users - 1
 	f := newAESGCMMatchFixture(b, cipherType, users, targetIdx)
 
 	runtime.GC()
@@ -109,7 +108,7 @@ func benchmarkSSAEAD_AESGCM_UserMatch_100k_ValidatorGet(b *testing.B, cipherType
 
 func benchmarkSSAEAD_AESGCM_UserMatch_100k_ExtractedMatcher(b *testing.B, cipherType CipherType) {
 	const users = 100_000
-	targetIdx := rand.New(rand.NewPCG(20260224, 1)).IntN(users)
+	targetIdx := users - 1
 	f := newAESGCMMatchFixture(b, cipherType, users, targetIdx)
 
 	runtime.GC()
