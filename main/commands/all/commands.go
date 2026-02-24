@@ -13,6 +13,7 @@ func init() {
 		api.CmdAPI,
 		convert.CmdConvert,
 		tls.CmdTLS,
+		cmdSSPerf,
 		cmdUUID,
 		cmdX25519,
 		cmdWG,
