@@ -20,6 +20,9 @@ type Validator struct {
 
 	behaviorSeed  uint64
 	behaviorFused bool
+
+	useIPSecMB     bool
+	aes128gcmMatch *AES128GCMUserMatcher
 }
 
 var ErrNotFound = errors.New("Not Found")
@@ -32,6 +35,15 @@ func (v *Validator) Add(u *protocol.MemoryUser) error {
 	account := u.Account.(*MemoryAccount)
 	if !account.Cipher.IsAEAD() && len(v.users) > 0 {
 		return errors.New("The cipher is not support Single-port Multi-user")
+	}
+	if v.useIPSecMB {
+		if account.CipherType != CipherType_AES_128_GCM {
+			return errors.New("ipsec-mb user matcher requires aes-128-gcm")
+		}
+		if len(account.Key) != 16 {
+			return errors.New("unexpected key size")
+		}
+		v.aes128gcmMatch = nil
 	}
 	v.users = append(v.users, u)
 
@@ -70,6 +82,9 @@ func (v *Validator) Del(email string) error {
 	v.users[idx] = v.users[ulen-1]
 	v.users[ulen-1] = nil
 	v.users = v.users[:ulen-1]
+	if v.useIPSecMB {
+		v.aes128gcmMatch = nil
+	}
 
 	return nil
 }
@@ -108,8 +123,79 @@ func (v *Validator) GetCount() int64 {
 	return int64(len(v.users))
 }
 
+func (v *Validator) EnableIPSecMB() error {
+	v.Lock()
+	defer v.Unlock()
+
+	if !ipsecmbAvailable() {
+		return errors.New("ipsec-mb is not enabled in this build")
+	}
+
+	for _, user := range v.users {
+		account := user.Account.(*MemoryAccount)
+		if account.CipherType != CipherType_AES_128_GCM {
+			return errors.New("ipsec-mb user matcher requires aes-128-gcm")
+		}
+		if len(account.Key) != 16 {
+			return errors.New("unexpected key size")
+		}
+	}
+
+	matcher, err := NewAES128GCMUserMatcher(v.users)
+	if err != nil {
+		return err
+	}
+
+	v.useIPSecMB = true
+	v.aes128gcmMatch = matcher
+	return nil
+}
+
+func (v *Validator) getAES128GCMMatcher() (*AES128GCMUserMatcher, error) {
+	v.RLock()
+	enabled := v.useIPSecMB
+	matcher := v.aes128gcmMatch
+	v.RUnlock()
+	if !enabled {
+		return nil, nil
+	}
+	if matcher != nil {
+		return matcher, nil
+	}
+
+	v.Lock()
+	defer v.Unlock()
+	if !v.useIPSecMB {
+		return nil, nil
+	}
+	if v.aes128gcmMatch != nil {
+		return v.aes128gcmMatch, nil
+	}
+
+	matcher, err := NewAES128GCMUserMatcher(v.users)
+	if err != nil {
+		return nil, err
+	}
+	v.aes128gcmMatch = matcher
+	return matcher, nil
+}
+
 // Get a Shadowsocks user.
 func (v *Validator) Get(bs []byte, command protocol.RequestCommand) (u *protocol.MemoryUser, aead cipher.AEAD, ret []byte, ivLen int32, err error) {
+	if command == protocol.RequestCommandTCP {
+		matcher, matcherErr := v.getAES128GCMMatcher()
+		if matcherErr != nil {
+			return nil, nil, nil, 0, matcherErr
+		}
+		if matcher != nil {
+			u, aead, ivLen, err = matchAES128GCMUserIPsecMB(matcher, bs)
+			if err != nil {
+				return nil, nil, nil, 0, err
+			}
+			return u, aead, nil, ivLen, nil
+		}
+	}
+
 	v.RLock()
 	defer v.RUnlock()
 

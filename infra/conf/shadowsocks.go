@@ -46,6 +46,7 @@ type ShadowsocksServerConfig struct {
 	Email       string                   `json:"email"`
 	Users       []*ShadowsocksUserConfig `json:"clients"`
 	NetworkList *NetworkList             `json:"network"`
+	UseIpsecmb  bool                     `json:"useIpsecmb"`
 }
 
 func (v *ShadowsocksServerConfig) Build() (proto.Message, error) {
@@ -57,6 +58,7 @@ func (v *ShadowsocksServerConfig) Build() (proto.Message, error) {
 
 	config := new(shadowsocks.ServerConfig)
 	config.Network = v.NetworkList.Build()
+	config.UseIpsecmb = v.UseIpsecmb
 
 	if v.Users != nil {
 		for _, user := range v.Users {

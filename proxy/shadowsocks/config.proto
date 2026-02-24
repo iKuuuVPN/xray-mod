@@ -29,6 +29,9 @@ enum CipherType {
 message ServerConfig {
   repeated xray.common.protocol.User users = 1;
   repeated xray.common.net.Network network = 2;
+
+  // Use Intel(R) IPSec Multi-Buffer library for SS AEAD aes-128-gcm user matching.
+  bool use_ipsecmb = 3;
 }
 
 message ClientConfig {

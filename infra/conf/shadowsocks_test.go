@@ -32,5 +32,23 @@ func TestShadowsocksServerConfigParsing(t *testing.T) {
 				Network: []net.Network{net.Network_TCP},
 			},
 		},
+		{
+			Input: `{
+				"method": "aes-128-GCM",
+				"password": "xray-password",
+				"useIpsecmb": true
+			}`,
+			Parser: loadJSON(creator),
+			Output: &shadowsocks.ServerConfig{
+				Users: []*protocol.User{{
+					Account: serial.ToTypedMessage(&shadowsocks.Account{
+						CipherType: shadowsocks.CipherType_AES_128_GCM,
+						Password:   "xray-password",
+					}),
+				}},
+				Network:    []net.Network{net.Network_TCP},
+				UseIpsecmb: true,
+			},
+		},
 	})
 }
