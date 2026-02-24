@@ -3,14 +3,13 @@
 package shadowsocks
 
 import (
-	"math/rand/v2"
 	"runtime"
 	"testing"
 )
 
 func BenchmarkSSAEAD_AES128GCM_UserMatch_100k_Random_IPsecMB(b *testing.B) {
 	const users = 100_000
-	targetIdx := rand.New(rand.NewPCG(20260224, 1)).IntN(users)
+	targetIdx := users - 1
 	f := newAES128GCMMatchFixture(b, users, targetIdx)
 
 	runtime.GC()

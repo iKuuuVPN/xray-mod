@@ -2,7 +2,6 @@ package shadowsocks
 
 import (
 	"io"
-	"math/rand/v2"
 	"net"
 	"runtime"
 	"testing"
@@ -12,9 +11,7 @@ import (
 
 func benchmarkSSAEAD_AES128GCM_E2E_UserMatch_100k(b *testing.B, useIPSecMB bool) {
 	const users = 100_000
-	const seed = 20260224
-
-	targetIdx := rand.New(rand.NewPCG(seed, 1)).IntN(users)
+	targetIdx := users - 1
 	f := newAES128GCMMatchFixture(b, users, targetIdx)
 	if useIPSecMB {
 		if !ipsecmbAvailable() {
