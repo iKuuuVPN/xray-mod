@@ -10,7 +10,9 @@ package shadowsocks
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef SS_MB_MAX_BURST
 #define SS_MB_MAX_BURST 64
+#endif
 
 struct ss_mb_ctx {
 	IMB_MGR *mgr;
